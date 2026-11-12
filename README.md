@@ -79,10 +79,5 @@ docs/         design notes
 tests/        partitioner, codec and simulator tests
 ```
 
-## Known limits
-
-- The demo fakes the server: lights are animated by a function and delayed by the slider, not streamed from a real renderer.
-- The codec is sparse int8 deltas plus zlib. It has no loss recovery beyond "request a keyframe".
-- Reprojection of lighting onto a new pose will smear at disocclusions during fast pans. Handling that well (depth-aware warp with a fill pass) is the main open piece.
 
 Licensed under AGPL-3.0.
