@@ -31,16 +31,16 @@ Stages are assigned by a small partitioner ([`server/python/partitioner.py`](ser
 
 ## Measured results
 
-What has actually been measured is the lighting delta codec, on the CPU of the machine that ran [`benchmarks/codec_bench.py`](benchmarks/codec_bench.py) (2 vCPU cloud VM, Python + numpy, synthetic data). Lighting buffer 320×180×3 = 172,800 cells; a full keyframe is 432 KiB.
+What has actually been measured is the lighting delta codec, on the CPU of the machine that ran [`benchmarks/codec_bench.py`](benchmarks/codec_bench.py) (2 vCPU cloud VM, Python + numpy, synthetic data). Lighting buffer 320×180×3 = 172,800 cells; a full keyframe is 154.5 KiB. Gaps between changed cells are stored as u16 and the stream is zlib level 1.
 
 | Cells changed per frame | Packet size | Bandwidth at 60 fps | Encode | Decode |
 |---:|---:|---:|---:|---:|
-| 1% | 4.2 KiB | 2.1 Mbps | 0.80 ms | 0.19 ms |
-| 5% | 18.0 KiB | 8.8 Mbps | 1.37 ms | 0.38 ms |
-| 20% | 68.4 KiB | 33.6 Mbps | 3.53 ms | 1.17 ms |
-| 50% | 169.6 KiB | 83.4 Mbps | 7.96 ms | 2.64 ms |
+| 1% | 3.0 KiB | 1.5 Mbps | 0.72 ms | 0.18 ms |
+| 5% | 12.4 KiB | 6.1 Mbps | 1.03 ms | 0.31 ms |
+| 20% | 38.1 KiB | 18.7 Mbps | 1.89 ms | 0.71 ms |
+| 50% | 79.7 KiB | 39.2 Mbps | 3.76 ms | 1.45 ms |
 
-Takeaway: sparse deltas stay small only while little of the lighting changes per frame. The real bandwidth of a game depends on how much of its lighting changes, which this repo does not yet measure.
+Versus the first version of the codec (absolute indices, structured arrays), packets are 30-50% smaller and encode is up to 2x faster. Sparse deltas stay small only while little of the lighting changes per frame; real bandwidth depends on the game. Values are int8-quantised and clamp at about ±4 lighting units, which is the source of drift in a random-walk stress test at 50% change.
 
 ## Simulated comparison
 
@@ -70,6 +70,14 @@ python server/python/simulator.py --rtt 120 --frames 2000
 pytest -q
 ```
 
+Streaming server (stdlib asyncio, one encoder per client, slow clients are skipped and resynced with a keyframe, clean SIGTERM shutdown):
+
+```bash
+python server/streaming/server.py --port 9000 --fps 60
+# or
+docker build -t split-render . && docker run -p 9000:9000 split-render
+```
+
 Browser demo (no build step; Three.js loads from a CDN):
 
 ```bash
@@ -85,7 +93,7 @@ Left pane: whole frames arrive late, drop under load and smear when the camera m
 client/       browser demo: Three.js scene, camera pose history, GLSL shaders
 server/
   python/     stage partitioner and latency simulator
-  streaming/  delta-packet codec for the lighting stream
+  streaming/  delta codec and asyncio streaming server
 benchmarks/   codec benchmark, plus modelled summary.csv
 docs/         design notes
 tests/        partitioner, codec and simulator tests

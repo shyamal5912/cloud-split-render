@@ -1,0 +1,6 @@
+.venv
+.git
+tests
+client
+docs
+benchmarks
