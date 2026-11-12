@@ -1,0 +1,5 @@
+config,avg_fps,p1_low_fps,avg_latency_ms,p99_latency_ms,lighting_age_ms,psnr_db,client_ram_mb,client_vram_mb,bandwidth_mbps
+Local only (entry-level laptop),7.5,3.9,219.5,390.8,0.0,24.5,3920,1850,0.0
+Standard video streaming,57.2,20.2,78.5,93.6,0.0,31.8,1150,320,18.5
+Hybrid split rendering,59.9,50.0,12.7,13.6,52.5,41.2,1820,525,9.4
+Local only (high-end desktop),113.8,94.6,19.2,20.3,0.0,48.0,14800,11400,0.0

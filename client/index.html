@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Split rendering demo: streaming vs hybrid</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b1020; color: #e6edf3; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  .pane { position: fixed; top: 12px; padding: 10px 14px; background: #0d1117cc; border: 1px solid #30363d; border-radius: 8px; backdrop-filter: blur(6px); pointer-events: none; }
+  #left { left: 12px; } #right { right: 12px; text-align: right; }
+  .pane b { display: block; font-size: 15px; margin-bottom: 2px; }
+  .pane span.v { font-variant-numeric: tabular-nums; font-weight: 600; }
+  #left b { color: #f0883e; } #right b { color: #3fb950; }
+  #divider { position: fixed; left: 50%; top: 0; bottom: 0; width: 2px; background: #e6edf3; opacity: .6; pointer-events: none; }
+  #bar { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); padding: 10px 18px; background: #0d1117e6; border: 1px solid #30363d; border-radius: 10px; display: flex; gap: 14px; align-items: center; }
+  #bar input { width: 280px; }
+  #hint { color: #8b949e; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="divider"></div>
+<div class="pane" id="left"><b>Standard streaming</b>
+  input-to-photon <span class="v" id="latL">0</span> ms<br>
+  frame rate <span class="v" id="fpsL">0</span> fps</div>
+<div class="pane" id="right"><b>Hybrid split rendering</b>
+  input-to-photon <span class="v" id="latR">0</span> ms<br>
+  lighting age <span class="v" id="ageR">0</span> ms<br>
+  frame rate <span class="v" id="fpsR">0</span> fps</div>
+<div id="bar">
+  <label for="rtt">Network RTT <span class="v"><span id="rttOut">80</span> ms</span></label>
+  <input id="rtt" type="range" min="0" max="150" value="80">
+  <span id="hint">drag to look, WASD to move</span>
+</div>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
