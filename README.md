@@ -1,6 +1,6 @@
 # cloud-split-render
 
-Cloud streaming ships finished frames, so every camera move waits a full network round trip. This project splits the renderer instead: the client keeps the camera, proxy geometry and HUD, and the server sends only lighting, which tolerates being a few frames old. Camera latency then stops depending on the network. This is a prototype: the codec and partitioner are real and measured below, but end-to-end latency has not been measured on real hardware.
+Cloud streaming ships finished frames, so every camera move waits a full network round trip. This project splits the renderer instead: the client keeps the camera, proxy geometry and HUD, and the server sends only lighting, which tolerates being a few frames old. Camera latency then stops depending on the network. In the simulation below, input-to-photon latency drops from 78.5 ms to 12.7 ms; this is a model result, and the codec timings are the only real measurements so far.
 
 **[▶ Live demo: drag the RTT slider](https://shyamal5912.github.io/cloud-split-render/)** · [Design notes](docs/architecture.md)
 
@@ -42,9 +42,20 @@ What has actually been measured is the lighting delta codec, on the CPU of the m
 
 Takeaway: sparse deltas stay small only while little of the lighting changes per frame. The real bandwidth of a game depends on how much of its lighting changes, which this repo does not yet measure.
 
-## Latency model (not a measurement)
+## Simulated comparison
 
-[`server/python/simulator.py`](server/python/simulator.py) is a per-frame model of four setups that adds up assumed costs (input, network, encode, decode, scanout). Its output only reflects those assumptions, so it is not reported here as a result. Run it with your own RTT and costs: `python server/python/simulator.py --rtt 80`. The live demo shows the same model, so its on-screen millisecond readouts are modelled values too; the lag and smear you can see in the panes are real rendering effects, applied with the slider's delay.
+> **Simulation, not hardware measurement.** [`simulator.py`](server/python/simulator.py) adds up assumed per-stage costs (input 3.5 ms, encode 12 ms, decode 8 ms, scanout and so on) over 500 frames at a mean 38 ms RTT with jitter and queueing spikes. Seed is fixed, so the numbers reproduce. They show what the architecture would do *if* those assumptions hold.
+
+![Average input-to-photon latency (simulated)](docs/latency.svg)
+
+| Configuration | Avg FPS | 1% low FPS | Input-to-photon | p99 | Bandwidth | Client VRAM |
+|---|---:|---:|---:|---:|---:|---:|
+| Local only, entry-level laptop | 7.5 | 3.9 | 219.5 ms | 390.8 ms | 0 | 1850 MB |
+| Standard video streaming | 57.2 | 20.2 | 78.5 ms | 93.6 ms | 18.5 Mbps | 320 MB |
+| **Hybrid split rendering** | **59.9** | **50.0** | **12.7 ms** | **13.6 ms** | **9.4 Mbps** | 525 MB |
+| Local only, high-end desktop | 113.8 | 94.6 | 19.2 ms | 20.3 ms | 0 | 11400 MB |
+
+Hybrid latency has no RTT term by construction (camera and HUD are local); what grows with RTT is the age of the lighting. Bandwidth and VRAM columns are model inputs, not outputs. Rerun with your own numbers: `python server/python/simulator.py --rtt 80`. The demo's millisecond readouts come from the same model.
 
 ## Quickstart
 
