@@ -9,7 +9,7 @@ Wire format (little endian):
     body   : zlib( gaps | deltas )
              gaps   : count * u16 (or u32 if FLAG_WIDE) distance from the previous
                       changed cell, so runs of nearby changes compress well
-             deltas : count * i8
+             deltas : count * i8 (or i16 if FLAG_D16, when any change exceeds +-127)
 
 `Encoder` keeps the previous quantised frame so each frame is quantised once and
 scratch buffers are reused; this matters when one process serves many sessions.
@@ -25,6 +25,8 @@ import numpy as np
 MAGIC = 0xA7E1
 FLAG_KEY = 0x01
 FLAG_WIDE = 0x02
+FLAG_D16 = 0x04
+LIMIT = 32767  # int16 range = +-1024 lighting units
 _HEADER = struct.Struct("<HIB7fI")
 SCALE = 1 / 32  # one quantisation step in lighting units
 
@@ -44,7 +46,7 @@ class Encoder:
     def __init__(self, size: int, level: int = 1):
         self.size = size
         self.level = level  # zlib 1 is the right latency/size trade for live streaming
-        self._prev = np.zeros(size, dtype=np.int16)
+        self._prev = np.zeros(size, dtype=np.int32)
         self._frame = -1
 
     def reset(self) -> None:
@@ -58,16 +60,18 @@ class Encoder:
         if buf.size != self.size:
             raise ValueError(f"expected {self.size} cells, got {buf.size}")
         key = self._frame < 0
-        cur = np.clip(np.rint(buf.ravel() / SCALE), -127, 127).astype(np.int16)
-        delta = np.clip(cur - self._prev, -127, 127)
+        cur = np.clip(np.rint(buf.ravel() / SCALE), -LIMIT, LIMIT).astype(np.int32)
+        delta = cur - self._prev  # exact: no per-frame clamp, so no accumulated drift
         idx = np.flatnonzero(delta)
-        self._prev += delta.astype(np.int16)  # track what the client reconstructs
+        self._prev = cur
         gaps = np.diff(idx, prepend=0)
         wide = bool(len(gaps)) and int(gaps.max()) > 0xFFFF
-        flags = (FLAG_KEY if key else 0) | (FLAG_WIDE if wide else 0)
+        changes = delta[idx]
+        d16 = bool(len(changes)) and int(np.abs(changes).max()) > 127
+        flags = (FLAG_KEY if key else 0) | (FLAG_WIDE if wide else 0) | (FLAG_D16 if d16 else 0)
         body = zlib.compress(
-            gaps.astype("<u4" if wide else "<u2").tobytes() + delta[idx].astype(np.int8).tobytes(),
-            self.level)
+            gaps.astype("<u4" if wide else "<u2").tobytes()
+            + changes.astype("<i2" if d16 else "i1").tobytes(), self.level)
         self._frame += 1
         return _HEADER.pack(MAGIC, self._frame, flags, *pose, len(idx)) + body
 
@@ -78,10 +82,11 @@ def decode(data: bytes) -> Packet:
         raise ValueError("bad magic")
     raw = zlib.decompress(data[_HEADER.size:])
     gap_t = np.dtype("<u4" if flags & FLAG_WIDE else "<u2")
-    if len(raw) != count * (gap_t.itemsize + 1):
+    d_t = np.dtype("<i2" if flags & FLAG_D16 else "i1")
+    if len(raw) != count * (gap_t.itemsize + d_t.itemsize):
         raise ValueError("corrupt packet: cell count mismatch")
     gaps = np.frombuffer(raw, gap_t, count)
-    delta = np.frombuffer(raw, np.int8, count, offset=count * gap_t.itemsize)
+    delta = np.frombuffer(raw, d_t, count, offset=count * gap_t.itemsize)
     return Packet(frame, bool(flags & FLAG_KEY), tuple(rest), np.cumsum(gaps, dtype=np.int64), delta)
 
 
@@ -89,7 +94,7 @@ class Reconstructor:
     """Client-side state that accumulates deltas back into a lighting buffer."""
 
     def __init__(self, size: int):
-        self.state = np.zeros(size, dtype=np.int16)
+        self.state = np.zeros(size, dtype=np.int32)
         self.last_frame = -1
 
     def apply(self, pkt: Packet) -> np.ndarray:
@@ -99,4 +104,4 @@ class Reconstructor:
             raise ValueError("gap in delta chain; request a keyframe")
         self.state[pkt.index] += pkt.delta  # indices are unique, so fancy-index add is safe
         self.last_frame = pkt.frame
-        return np.clip(self.state, -127, 127).astype(np.float32) * SCALE
+        return self.state.astype(np.float32) * SCALE

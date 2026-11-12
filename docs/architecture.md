@@ -31,4 +31,4 @@ See the docstring in [`server/streaming/delta_packets.py`](../server/streaming/d
 
 ## What is not modelled
 
-Packet loss, congestion control, encoder queueing under load, and disocclusion artefacts. Each can be added to `simulate()` as another per-frame term.
+Packet loss, congestion control and encoder queueing under load. The browser demo does implement depth-based reprojection with disocclusion discard and blur fill, but it has no quality metric; judge it by eye. Each can be added to `simulate()` as another per-frame term.

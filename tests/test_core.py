@@ -57,9 +57,15 @@ def test_no_drift_over_many_frames():
     x = rng.uniform(-1, 1, 2048).astype(np.float32)
     enc, rec = Encoder(x.size), Reconstructor(x.size)
     for _ in range(300):
-        x = np.clip(x + rng.normal(0, 0.03, x.shape).astype(np.float32), -3, 3)
+        x = x + rng.normal(0, 0.3, x.shape).astype(np.float32)  # walks far past +-4
         out = _roundtrip(enc, rec, x)
     assert np.abs(out - x).max() <= SCALE
+
+
+def test_large_values_survive_keyframe():
+    x = np.full(64, 90.0, dtype=np.float32)
+    enc, rec = Encoder(64), Reconstructor(64)
+    assert np.abs(_roundtrip(enc, rec, x) - x).max() <= SCALE
 
 
 def test_delta_is_smaller_than_keyframe():

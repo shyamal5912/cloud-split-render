@@ -8,10 +8,13 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setScissorTest(true);
 
 const load = (u) => fetch(new URL(u, import.meta.url)).then((r) => r.text());
-const [vert, frag, smear] = await Promise.all([
+const [vert, frag, smear, rpVert, rpFrag, fillFrag] = await Promise.all([
   load('../shaders/lit_proxy.vert.glsl'),
   load('../shaders/lit_proxy.frag.glsl'),
   load('../shaders/codec_smear.frag.glsl'),
+  load('../shaders/reproject.vert.glsl'),
+  load('../shaders/reproject.frag.glsl'),
+  load('../shaders/fill.frag.glsl'),
 ]);
 
 // ---- scene: procedural block city -------------------------------------------------
@@ -56,7 +59,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b1020);
 scene.add(city, ground);
 
-// proxy wireframe overlay: what the client really renders locally
+// proxy wireframe overlay: what the client really renders locally, at the live pose
 const wire = new THREE.LineSegments(new THREE.WireframeGeometry(merged),
   new THREE.LineBasicMaterial({ color: 0x3fb950, transparent: true, opacity: 0.18 }));
 const wireScene = new THREE.Scene();
@@ -77,6 +80,34 @@ const post = new THREE.ShaderMaterial({
 const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), post);
 const quadScene = new THREE.Scene(); quadScene.add(quad);
 const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+// ---- hybrid pane: server frame (colour + depth) warped to the live camera -----------
+const rtS = new THREE.WebGLRenderTarget(2, 2, {
+  depthTexture: new THREE.DepthTexture(2, 2),
+  generateMipmaps: true,
+  minFilter: THREE.LinearMipmapLinearFilter,
+  magFilter: THREE.LinearFilter,
+});
+const GRID_W = 240, GRID_H = 135;
+const warpMat = new THREE.ShaderMaterial({
+  vertexShader: rpVert, fragmentShader: rpFrag,
+  uniforms: {
+    tColor: { value: rtS.texture }, tDepth: { value: rtS.depthTexture },
+    uStaleInvVP: { value: new THREE.Matrix4() }, uCurVP: { value: new THREE.Matrix4() },
+    uTexel: { value: new THREE.Vector2(1 / GRID_W, 1 / GRID_H) },
+    uNearFar: { value: new THREE.Vector2(0.1, 500) }, uEdge: { value: 0.06 },
+  },
+  depthTest: false, side: THREE.DoubleSide,
+});
+const warpMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2, GRID_W, GRID_H), warpMat);
+warpMesh.frustumCulled = false;
+const warpScene = new THREE.Scene(); warpScene.add(warpMesh);
+const fillMat = new THREE.ShaderMaterial({
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
+  fragmentShader: fillFrag, uniforms: { tColor: { value: rtS.texture }, uLod: { value: 4 } }, depthTest: false,
+});
+const fillScene = new THREE.Scene(); fillScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), fillMat));
+const camS = new THREE.PerspectiveCamera(70, 1, 0.1, 500); // the camera the server used
 
 // ---- server light history ----------------------------------------------------------
 function serverLights(t) {
@@ -103,8 +134,10 @@ function resize() {
   const half = Math.floor(w / 2 * renderer.getPixelRatio());
   rtL.setSize(half, Math.floor(h * renderer.getPixelRatio()));
   post.uniforms.uTexel.value.set(1 / half, 1 / (h * renderer.getPixelRatio()));
-  camL.aspect = camR.aspect = (w / 2) / h;
-  camL.updateProjectionMatrix(); camR.updateProjectionMatrix();
+  rtS.setSize(half, Math.floor(h * renderer.getPixelRatio()));
+  rtS.depthTexture.image.width = rtS.width; rtS.depthTexture.image.height = rtS.height;
+  camL.aspect = camR.aspect = camS.aspect = (w / 2) / h;
+  camL.updateProjectionMatrix(); camR.updateProjectionMatrix(); camS.updateProjectionMatrix();
 }
 addEventListener('resize', resize); resize();
 
@@ -141,19 +174,32 @@ function frame(now) {
   renderer.autoClear = true;
   renderer.render(quadScene, quadCam);
 
-  // RIGHT: camera and proxy geometry are current; only lighting is RTT-old.
+  // RIGHT: the server renders with an RTT-old pose and sends colour + depth. The client
+  // warps that frame to the live pose using the depth, fills holes, and overlays its own
+  // always-current proxy wireframe.
+  const age = rtt + 11.5;
+  applyPose(camS, rig.poseAt(now, age));
+  setLights(now - age);
+  renderer.setRenderTarget(rtS);
+  renderer.setViewport(0, 0, rtS.width, rtS.height); renderer.setScissor(0, 0, rtS.width, rtS.height);
+  renderer.render(scene, camS);
+  renderer.setRenderTarget(null);
+
   applyPose(camR, rig.poseAt(now, 0));
-  setLights(now - rtt - 11.5);
+  camS.updateMatrixWorld(); camR.updateMatrixWorld();
+  warpMat.uniforms.uStaleInvVP.value.multiplyMatrices(camS.projectionMatrix, camS.matrixWorldInverse).invert();
+  warpMat.uniforms.uCurVP.value.multiplyMatrices(camR.projectionMatrix, camR.matrixWorldInverse);
   renderer.setViewport(half, 0, half, h); renderer.setScissor(half, 0, half, h);
-  renderer.render(scene, camR);
+  renderer.render(fillScene, quadCam);
   renderer.autoClear = false;
+  renderer.render(warpScene, quadCam);
   renderer.render(wireScene, camR);
   renderer.autoClear = true;
   fpsR += (1 / dt - fpsR) * 0.1;
 
   $('latL').textContent = pctl(3.5 + rtt + 12 + 8 + 14);
   $('latR').textContent = pctl(1 + 1.4 + 6.15 + 4.2);
-  $('ageR').textContent = pctl(rtt + 11.5);
+  $('ageR').textContent = pctl(age);
   $('fpsL').textContent = pctl(Math.min(fpsL, 60) * (1 - dropChance * 0.5));
   $('fpsR').textContent = pctl(Math.min(fpsR, 60));
 }
